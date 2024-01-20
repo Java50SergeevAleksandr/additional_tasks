@@ -38,6 +38,7 @@ public class Json {
 		parsersByType.put(String.class, Function.identity());
 
 		parsersByType.put(LocalDate.class, v -> LocalDate.parse(v, DateTimeFormatter.ofPattern("dd/MM/yyyy")));
+
 	}
 
 	public <T> T parse(String json, Class<T> type) throws Exception {
@@ -81,16 +82,38 @@ public class Json {
 
 	private <T> T parseObject(SimpleJsonTokenizer tokenizer, Class<T> objType) throws Exception {
 		T res = objType.getDeclaredConstructor().newInstance();
+		Map<String, String> specialFieldNames = new HashMap<>();
+		Arrays.stream(objType.getDeclaredFields()).filter(f -> f.isAnnotationPresent(JsonField.class)).forEach(f -> {
+			String fName = f.getName();
+			String specialJsonName = f.getAnnotation(JsonField.class).value();
+			specialFieldNames.put(specialJsonName, fName);
+		});
 		assertNextToken(tokenizer, "{");
 		int parsedFields = 0;
 		while (!tokenizer.peek().equals("}")) {
+
 			if (parsedFields > 0) {
 				assertNextToken(tokenizer, ",");
 			}
+
 			String key = tokenizer.next();
-			Field field = objType.getDeclaredField(stripQuotes(key));
+			String fieldName = stripQuotes(key);
+
+			if (specialFieldNames.containsKey(fieldName)) {
+				fieldName = specialFieldNames.get(fieldName);
+			}
+
+			Field field = objType.getDeclaredField(fieldName);
 			assertNextToken(tokenizer, ":");
-			Object value = parseValue(tokenizer, field.getType());
+			Class<?> fieldType = field.getType();
+
+			if (field.isAnnotationPresent(JsonFormat.class)) {
+				String pattern = field.getAnnotation(JsonFormat.class).value();
+				parsersByType.put(JsonFormat.class, v -> LocalDate.parse(v, DateTimeFormatter.ofPattern(pattern)));
+				fieldType = JsonFormat.class;
+			}
+
+			Object value = parseValue(tokenizer, fieldType);
 			field.setAccessible(true);
 			field.set(res, value);
 			parsedFields++;
